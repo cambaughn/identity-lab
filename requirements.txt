@@ -1,0 +1,8 @@
+# Pinned after verifying this combination works together on macOS 13.7 / Apple M2
+# (see docs/environment.md). Install: .venv/bin/pip install -r requirements.txt
+numpy==2.4.6
+opencv-python==5.0.0.93
+insightface==1.0.1
+onnxruntime==1.23.2
+PySide6==6.11.1
+pytest==9.1.1
