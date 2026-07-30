@@ -1,0 +1,47 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python build/cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local databases and biometric data — never commit
+*.db
+*.sqlite
+*.sqlite3
+enrollment_data/
+identity_data/
+
+# Model weights — downloaded, never committed
+*.onnx
+models/
+
+# Evaluation images and results (may contain biometric/private data)
+evaluation/
+eval_results/
+*.eval.json
+*.eval.csv
+
+# Logs
+*.log
+logs/
+
+# Local settings
+settings.json
+.env
+*.local
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
