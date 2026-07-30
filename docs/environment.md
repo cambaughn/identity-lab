@@ -75,3 +75,25 @@ explicitly; `get(img, max_num=0, det_metric='default')`; faces expose
 `normed_embedding`, `embedding_norm`, bbox/kps/det_score.
 
 Reproduce measurements: `.venv/bin/python scripts/model_check.py`
+
+## Webcam smoke test (CP3, 2026-07-30)
+
+`scripts/smoke_test.py` passed: built-in camera at index 0 delivers 1920×1080
+frames via AVFoundation; a real face was detected (score 0.89) with a 512-dim
+embedding; camera released cleanly (green light confirmed off).
+
+Findings:
+
+- **Camera permission is granted to Terminal.app, not the Claude desktop app.**
+  macOS attributes camera access to the hosting application. Requests from
+  inside the Claude app crash (`Abort trap: 6`) without registering a TCC
+  entry, so anything that touches the camera — smoke test, the live app —
+  must be launched from Terminal. OpenCV also does not wait for the
+  permission prompt: the very first run fails while macOS is still showing
+  the dialog; clicking Allow and re-running succeeds.
+- **First inference on a real face costs ~6.6 s** (one-time lazy init of the
+  landmark/recognition ONNX sessions; a no-face image only exercises the
+  detector). Steady-state is ~150 ms/frame as measured at CP2. The live app
+  must do a warm-up inference during its loading state.
+- Harmless `FutureWarning` from insightface's internal scikit-image usage
+  (`SimilarityTransform.estimate` deprecation). Not our code; cosmetic.
