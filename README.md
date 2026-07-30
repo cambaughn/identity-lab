@@ -22,5 +22,21 @@ See [docs/environment.md](docs/environment.md) for the inspected machine details
 
 ```bash
 /opt/homebrew/bin/python3.11 -m venv .venv
-source .venv/bin/activate
+.venv/bin/pip install -r requirements.txt
+```
+
+## Launch
+
+Run from the macOS **Terminal** app — camera permission is attributed to the
+hosting application, and Terminal is the one that has it (see
+[docs/environment.md](docs/environment.md)):
+
+```bash
+.venv/bin/python -m identity_lab
+```
+
+## Tests (no webcam required)
+
+```bash
+.venv/bin/python -m pytest tests/
 ```
