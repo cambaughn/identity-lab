@@ -6,21 +6,32 @@ to defaults (per-field where possible) instead of crashing the app.
 """
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 APP_DATA_DIR = Path.home() / "Library" / "Application Support" / "IdentityLab"
 SETTINGS_FILENAME = "settings.json"
 
+INFER_EVERY_N_RANGE = (1, 30)
+MIN_FACE_PX_RANGE = (0, 1000)
+
 
 @dataclass
 class AppSettings:
-    camera_index: int = 0
-    window_geometry: str | None = None  # base64-encoded Qt geometry blob
+    camera_device_id: str | None = None  # Qt unique device id
+    show_landmarks: bool = False
+    debug_mode: bool = False
+    infer_every_n: int = 2               # run inference every Nth frame
+    min_face_px: int = 60                # ignore faces smaller than this (px)
+    window_geometry: str | None = None   # base64-encoded Qt geometry blob
 
 
 def settings_path(data_dir: Path | None = None) -> Path:
     return (data_dir or APP_DATA_DIR) / SETTINGS_FILENAME
+
+
+def _valid_int(value, lo: int, hi: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and lo <= value <= hi
 
 
 def load_settings(path: Path | None = None) -> AppSettings:
@@ -35,17 +46,24 @@ def load_settings(path: Path | None = None) -> AppSettings:
         return defaults
 
     loaded = AppSettings()
-    for f in fields(AppSettings):
-        if f.name not in raw:
-            continue
-        value = raw[f.name]
-        if f.name == "camera_index":
-            # bool is an int subclass; reject it explicitly
-            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-                loaded.camera_index = value
-        elif f.name == "window_geometry":
-            if isinstance(value, str) or value is None:
-                loaded.window_geometry = value
+    v = raw.get("camera_device_id")
+    if isinstance(v, str) or v is None:
+        loaded.camera_device_id = v
+    v = raw.get("show_landmarks")
+    if isinstance(v, bool):
+        loaded.show_landmarks = v
+    v = raw.get("debug_mode")
+    if isinstance(v, bool):
+        loaded.debug_mode = v
+    v = raw.get("infer_every_n")
+    if _valid_int(v, *INFER_EVERY_N_RANGE):
+        loaded.infer_every_n = v
+    v = raw.get("min_face_px")
+    if _valid_int(v, *MIN_FACE_PX_RANGE):
+        loaded.min_face_px = v
+    v = raw.get("window_geometry")
+    if isinstance(v, str) or v is None:
+        loaded.window_geometry = v
     return loaded
 
 

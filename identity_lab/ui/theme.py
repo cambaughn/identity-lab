@@ -81,6 +81,7 @@ def stylesheet() -> str:
         border-radius: {RADIUS}px;
         color: {AMBER};
         padding: {PAD - 2}px {PAD}px;
+        combobox-popup: 0;  /* non-native dropdown: aligns under the control */
     }}
     QComboBox::drop-down {{
         border: none;
@@ -101,6 +102,10 @@ def stylesheet() -> str:
         selection-color: {BG};
         outline: none;
     }}
+    QComboBox QAbstractItemView::item {{
+        min-height: 20px;
+        padding: 2px {PAD}px;
+    }}
     QLabel {{
         background: transparent;
     }}
@@ -120,5 +125,40 @@ def stylesheet() -> str:
         background-color: {BG_PANEL};
         color: {AMBER};
         border: {BORDER_W}px solid {AMBER_DIM};
+    }}
+    QCheckBox {{
+        color: {AMBER};
+        spacing: {PAD}px;
+    }}
+    QCheckBox::indicator {{
+        width: 12px;
+        height: 12px;
+        border: {BORDER_W}px solid {AMBER};
+        border-radius: {RADIUS}px;
+        background-color: {BG_PANEL};
+    }}
+    QCheckBox::indicator:checked {{
+        background-color: {AMBER};
+    }}
+    QCheckBox::indicator:disabled {{
+        border-color: {AMBER_FAINT};
+    }}
+    QSlider::groove:horizontal {{
+        height: 2px;
+        background: {AMBER_DIM};
+    }}
+    QSlider::handle:horizontal {{
+        width: 10px;
+        height: 14px;
+        margin: -7px 0;
+        background: {AMBER};
+        border-radius: {RADIUS}px;
+    }}
+    QPlainTextEdit {{
+        background-color: {BG};
+        color: {AMBER_DIM};
+        border: {BORDER_W}px solid {AMBER_FAINT};
+        border-radius: {RADIUS}px;
+        font-size: {FONT_SIZE_SMALL}px;
     }}
     """

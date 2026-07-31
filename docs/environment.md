@@ -97,3 +97,39 @@ Findings:
   must do a warm-up inference during its loading state.
 - Harmless `FutureWarning` from insightface's internal scikit-image usage
   (`SimilarityTransform.estimate` deprecation). Not our code; cosmetic.
+
+## Live detection performance (CP5, 2026-07-31)
+
+Observed in the running app on the M2 (1920×1080 capture, det_size 640×640,
+CPU): preview ~30 FPS; inference latency ~130 ms average per pass
+(detection ~90 ms + 106-point landmarks ~2–17 ms per face). Overlay boxes
+update at roughly 7–8 Hz — stepped box motion during fast head movement is
+expected until CP9's tracking layer interpolates between passes.
+
+**Embeddings are intentionally disabled in the detection-only path**:
+`VisionEngine.analyze(frame, with_embeddings=False)` skips the recognition
+model (~50 ms/face, measured steady-state) because nothing consumes
+embeddings before recognition lands (CP7+). Earlier full-pipeline latency
+was 220–250 ms; recognition checkpoints will re-enable embeddings via the
+`with_embeddings=True` flag and should expect roughly that cost again.
+A further tuning knob, if needed later: det_size 640→480 roughly halves
+detection cost at the expense of small/distant faces.
+
+## Camera device mapping (CP5, 2026-07-30)
+
+Camera names come from Qt (`QMediaDevices.videoInputs()`), which enumerates
+AVFoundation devices with real names and stable unique ids without opening
+them, and emits `videoInputsChanged` on hot-plug. OpenCV's AVFoundation
+backend can only *open* a camera by numeric index — it has no device-id API.
+
+**Mapping used:** a device's position in Qt's enumeration order is used as
+the OpenCV capture index. Verified on this Mac (single camera: Qt position 0
+= "FaceTime HD Camera" = the device OpenCV index 0 opened at CP3).
+
+**Documented limitation:** with multiple cameras attached, Qt and OpenCV
+both enumerate the same AVFoundation device list and are expected to agree
+on order, but neither API guarantees it. If a selected external camera ever
+opens the wrong device, this mapping is the place to look
+(`identity_lab/camera/devices.py`). The saved selection is stored by unique
+device id, so a disappeared device falls back to the system default rather
+than silently opening whatever occupies its old index.
