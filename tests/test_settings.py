@@ -78,6 +78,36 @@ def test_bool_rejected_for_ints(tmp_path):
     assert loaded.min_face_px == 60
 
 
+def test_recognition_settings_round_trip(tmp_path):
+    path = tmp_path / "settings.json"
+    original = AppSettings(
+        recognition_threshold=0.55, match_margin=0.12, top_k=5
+    )
+    save_settings(original, path)
+    loaded = load_settings(path)
+    assert loaded.recognition_threshold == 0.55
+    assert loaded.match_margin == 0.12
+    assert loaded.top_k == 5
+
+
+def test_recognition_settings_validation(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        '{"recognition_threshold": 1.5, "match_margin": -0.1, "top_k": 0}'
+    )
+    loaded = load_settings(path)
+    assert loaded.recognition_threshold == 0.40  # out of range -> default
+    assert loaded.match_margin == 0.08
+    assert loaded.top_k == 3
+    path.write_text(
+        '{"recognition_threshold": true, "match_margin": "big", "top_k": 3.5}'
+    )
+    loaded = load_settings(path)
+    assert loaded.recognition_threshold == 0.40
+    assert loaded.match_margin == 0.08
+    assert loaded.top_k == 3
+
+
 def test_unknown_and_legacy_keys_ignored(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text('{"camera_index": 2, "surprise": 42, "min_face_px": 100}')

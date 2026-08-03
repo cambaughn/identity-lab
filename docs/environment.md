@@ -115,6 +115,25 @@ was 220–250 ms; recognition checkpoints will re-enable embeddings via the
 A further tuning knob, if needed later: det_size 640→480 roughly halves
 detection cost at the expense of small/distant faces.
 
+## Live recognition performance (CP8, 2026-08-03)
+
+Observed with one enrolled identity (20 samples, CP7 enrollment without
+pose verification), threshold 0.40, margin 0.08, top-k 3:
+
+- straight ahead: similarity ~0.8–0.9
+- covering mouth or eyes, turning to the side, sunglasses (never enrolled
+  with sunglasses): ~0.6–0.7 — still comfortably recognized
+- un-enrolled faces / phone photos: well below threshold → UNKNOWN
+
+**Conclusion for the enrollment-quality question:** failures do NOT appear
+correlated with the lack of pose verification during enrollment; the
+embedding model is robust to modest pose/occlusion changes on top of
+time-spread frontal-ish samples. Pose verification remains a nice-to-have
+(see README known limitations), not a needed fix.
+
+Latency with embeddings enabled on every pass: ~150–250 ms per inference
+(vs ~130 ms detection-only), as expected.
+
 ## Camera device mapping (CP5, 2026-07-30)
 
 Camera names come from Qt (`QMediaDevices.videoInputs()`), which enumerates

@@ -1,5 +1,7 @@
 """Video preview area — live frame, console state text, and face overlays."""
 
+from dataclasses import dataclass, field
+
 from PySide6.QtCore import Qt, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QWidget
@@ -10,6 +12,17 @@ from identity_lab.ui.overlay import display_transform, map_bbox, map_point
 from identity_lab.vision.types import DetectedFace
 
 OVERLAY_FONT_PX = 11
+LABEL_FONT_PX = 13
+
+
+@dataclass(frozen=True)
+class OverlayFace:
+    """One face plus its display strings (composed by the main window)."""
+
+    face: DetectedFace
+    label: str                          # "CAM 0.62" or "UNKNOWN"
+    known: bool
+    debug_lines: tuple[str, ...] = field(default_factory=tuple)
 
 
 class VideoWidget(QWidget):
@@ -22,7 +35,7 @@ class VideoWidget(QWidget):
         self._image: QImage | None = None
         self._state: CameraState = CameraState.OFFLINE
         self._error_detail: str = ""
-        self._faces: tuple[DetectedFace, ...] = ()
+        self._entries: tuple[OverlayFace, ...] = ()
         self._frame_size: tuple[int, int] | None = None  # (w, h)
         self._show_landmarks = False
         self._debug = False
@@ -33,20 +46,20 @@ class VideoWidget(QWidget):
 
     def set_overlay(
         self,
-        faces: tuple[DetectedFace, ...],
+        entries: tuple[OverlayFace, ...],
         frame_w: int,
         frame_h: int,
         show_landmarks: bool,
         debug: bool,
     ) -> None:
-        self._faces = faces
+        self._entries = entries
         self._frame_size = (frame_w, frame_h)
         self._show_landmarks = show_landmarks
         self._debug = debug
         self.update()
 
     def clear_overlay(self) -> None:
-        self._faces = ()
+        self._entries = ()
         self._frame_size = None
         self.update()
 
@@ -83,23 +96,26 @@ class VideoWidget(QWidget):
         painter.end()
 
     def _draw_overlays(self, painter: QPainter) -> None:
-        if not self._faces or self._frame_size is None:
+        if not self._entries or self._frame_size is None:
             return
         frame_w, frame_h = self._frame_size
         scale, off_x, off_y = display_transform(
             frame_w, frame_h, self.width(), self.height()
         )
-        font = QFont()
-        font.setFamilies(["Menlo", "SF Mono", "Monaco", "Courier New"])
-        font.setPixelSize(OVERLAY_FONT_PX)
-        painter.setFont(font)
+        label_font = QFont()
+        label_font.setFamilies(["Menlo", "SF Mono", "Monaco", "Courier New"])
+        label_font.setPixelSize(LABEL_FONT_PX)
+        debug_font = QFont(label_font)
+        debug_font.setPixelSize(OVERLAY_FONT_PX)
 
-        box_pen = QPen(QColor(theme.AMBER))
-        box_pen.setWidth(theme.BORDER_W)
         landmark_pen = QPen(QColor(theme.AMBER_DIM))
         landmark_pen.setWidth(2)
 
-        for face in self._faces:
+        for entry in self._entries:
+            face = entry.face
+            color = QColor(theme.AMBER if entry.known else theme.AMBER_DIM)
+            box_pen = QPen(color)
+            box_pen.setWidth(theme.BORDER_W)
             # NOTE: the overlay mirror must match the preview mirror.
             x, y, w, h = map_bbox(
                 face.bbox, frame_w, scale, off_x, off_y, mirrored=True
@@ -107,15 +123,34 @@ class VideoWidget(QWidget):
             painter.setPen(box_pen)
             painter.drawRect(QRectF(x, y, w, h))
 
-            if self._debug:
-                label = f"DET {face.det_score:.2f}  {face.size_px}PX"
-                text_rect = QRectF(x, y - OVERLAY_FONT_PX - 6, max(w, 130), OVERLAY_FONT_PX + 4)
-                painter.fillRect(text_rect, QColor(0, 0, 0, 180))
-                painter.drawText(
-                    text_rect,
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                    label,
-                )
+            # Name label above the box.
+            painter.setFont(label_font)
+            label_rect = QRectF(
+                x, y - LABEL_FONT_PX - 8, max(w, 160), LABEL_FONT_PX + 6
+            )
+            painter.fillRect(label_rect, QColor(0, 0, 0, 190))
+            painter.setPen(QPen(color))
+            painter.drawText(
+                label_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                f" {entry.label}",
+            )
+
+            # Debug lines below the box.
+            if self._debug and entry.debug_lines:
+                painter.setFont(debug_font)
+                painter.setPen(QPen(QColor(theme.AMBER_DIM)))
+                line_h = OVERLAY_FONT_PX + 3
+                for i, line in enumerate(entry.debug_lines):
+                    dbg_rect = QRectF(
+                        x, y + h + 2 + i * line_h, max(w, 230), line_h
+                    )
+                    painter.fillRect(dbg_rect, QColor(0, 0, 0, 170))
+                    painter.drawText(
+                        dbg_rect,
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                        f" {line}",
+                    )
 
             if self._show_landmarks and face.landmarks is not None:
                 painter.setPen(landmark_pen)

@@ -59,6 +59,9 @@ class ControlPanel(QWidget):
     debug_toggled = Signal(bool)
     infer_every_n_changed = Signal(int)
     min_face_px_changed = Signal(int)
+    threshold_changed = Signal(float)
+    margin_changed = Signal(float)
+    top_k_changed = Signal(int)
 
     def __init__(
         self,
@@ -66,6 +69,9 @@ class ControlPanel(QWidget):
         debug_mode: bool = False,
         infer_every_n: int = 2,
         min_face_px: int = 60,
+        recognition_threshold: float = 0.40,
+        match_margin: float = 0.08,
+        top_k: int = 3,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -151,6 +157,46 @@ class ControlPanel(QWidget):
         det_layout.addWidget(self.min_face_label)
         det_layout.addWidget(self.min_face_slider)
 
+        # -- RECOGNITION --
+        rec_box = QGroupBox("RECOGNITION")
+        rec_layout = QVBoxLayout(rec_box)
+        rec_layout.setSpacing(theme.SPACING // 2)
+
+        self.threshold_label = QLabel("")
+        self.threshold_label.setObjectName("secondary")
+        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
+        self.threshold_slider.setRange(5, 95)  # 0.05 .. 0.95
+        self.threshold_slider.setValue(round(recognition_threshold * 100))
+        self._update_threshold_label(self.threshold_slider.value())
+        self.threshold_slider.valueChanged.connect(self._on_threshold_changed)
+
+        self.margin_label = QLabel("")
+        self.margin_label.setObjectName("secondary")
+        self.margin_slider = QSlider(Qt.Orientation.Horizontal)
+        self.margin_slider.setRange(0, 50)  # 0.00 .. 0.50
+        self.margin_slider.setValue(round(match_margin * 100))
+        self._update_margin_label(self.margin_slider.value())
+        self.margin_slider.valueChanged.connect(self._on_margin_changed)
+
+        topk_label = QLabel("TOP-K SAMPLES")
+        topk_label.setObjectName("secondary")
+        self.topk_selector = ConsoleComboBox()
+        for k in (1, 3, 5):
+            self.topk_selector.addItem(f"TOP {k}", k)
+        self.topk_selector.setCurrentIndex(
+            {1: 0, 3: 1, 5: 2}.get(top_k, 1)
+        )
+        self.topk_selector.currentIndexChanged.connect(
+            lambda _: self.top_k_changed.emit(int(self.topk_selector.currentData()))
+        )
+
+        rec_layout.addWidget(self.threshold_label)
+        rec_layout.addWidget(self.threshold_slider)
+        rec_layout.addWidget(self.margin_label)
+        rec_layout.addWidget(self.margin_slider)
+        rec_layout.addWidget(topk_label)
+        rec_layout.addWidget(self.topk_selector)
+
         # -- READOUTS --
         readout_box = QGroupBox("READOUTS")
         readout_layout = QVBoxLayout(readout_box)
@@ -162,6 +208,7 @@ class ControlPanel(QWidget):
         self.latency_label = QLabel("LATENCY --- MS")
         self.latency_label.setObjectName("secondary")
         self.faces_label = QLabel("FACES --")
+        self.id_label = QLabel("ID --")
         self.message_label = QLabel("")
         self.message_label.setObjectName("secondary")
         self.message_label.setWordWrap(True)
@@ -171,6 +218,7 @@ class ControlPanel(QWidget):
             self.fps_label,
             self.latency_label,
             self.faces_label,
+            self.id_label,
             self.message_label,
         ):
             readout_layout.addWidget(w)
@@ -187,6 +235,7 @@ class ControlPanel(QWidget):
         root.addWidget(cam_box)
         root.addWidget(id_box)
         root.addWidget(det_box)
+        root.addWidget(rec_box)
         root.addWidget(readout_box)
         root.addWidget(log_box)
         root.addStretch(1)
@@ -236,6 +285,22 @@ class ControlPanel(QWidget):
     def _update_min_face_label(self, value: int) -> None:
         self.min_face_label.setText(f"MIN FACE {value:03d} PX")
 
+    # -- recognition controls --
+
+    def _on_threshold_changed(self, value: int) -> None:
+        self._update_threshold_label(value)
+        self.threshold_changed.emit(value / 100.0)
+
+    def _update_threshold_label(self, value: int) -> None:
+        self.threshold_label.setText(f"THRESHOLD {value / 100.0:.2f}")
+
+    def _on_margin_changed(self, value: int) -> None:
+        self._update_margin_label(value)
+        self.margin_changed.emit(value / 100.0)
+
+    def _update_margin_label(self, value: int) -> None:
+        self.margin_label.setText(f"MARGIN {value / 100.0:.2f}")
+
     # -- run state & readouts --
 
     def set_running(self, running: bool) -> None:
@@ -271,6 +336,9 @@ class ControlPanel(QWidget):
 
     def show_face_count(self, count: int | None) -> None:
         self.faces_label.setText("FACES --" if count is None else f"FACES {count:02d}")
+
+    def show_recognition_result(self, text: str | None) -> None:
+        self.id_label.setText("ID --" if text is None else f"ID {text}")
 
     def set_enroll_enabled(self, enabled: bool) -> None:
         self.enroll_button.setEnabled(enabled)

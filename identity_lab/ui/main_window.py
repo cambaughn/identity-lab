@@ -25,11 +25,12 @@ from identity_lab.config.settings import (
 )
 from identity_lab.diagnostics.metrics import FpsCounter, StatusLog
 from identity_lab.identity.errors import IdentityStoreError
+from identity_lab.identity.matcher import Matcher, MatchResult, build_gallery
 from identity_lab.identity.store import DEFAULT_DB_FILENAME, IdentityStore
 from identity_lab.ui import theme
 from identity_lab.ui.control_panel import ControlPanel
 from identity_lab.ui.enroll_dialog import EnrollDialog
-from identity_lab.ui.video_widget import VideoWidget
+from identity_lab.ui.video_widget import OverlayFace, VideoWidget
 from identity_lab.vision.engine import MODEL_PACK
 from identity_lab.vision.types import InferenceResult, InferenceScheduler, filter_small_faces
 from identity_lab.vision.worker import InferenceWorker, ModelState
@@ -71,6 +72,8 @@ class MainWindow(QMainWindow):
         self._model_ready = False
         self._scheduler = InferenceScheduler(every_n=self._settings.infer_every_n)
         self._last_result: InferenceResult | None = None
+        self._last_matches: list[MatchResult | None] = []
+        self._matcher = Matcher([])
 
         self._fps = FpsCounter()
         self._status_log = StatusLog()
@@ -90,6 +93,9 @@ class MainWindow(QMainWindow):
             debug_mode=self._settings.debug_mode,
             infer_every_n=self._settings.infer_every_n,
             min_face_px=self._settings.min_face_px,
+            recognition_threshold=self._settings.recognition_threshold,
+            match_margin=self._settings.match_margin,
+            top_k=self._settings.top_k,
         )
         content.addWidget(self.video, stretch=1)
         content.addWidget(self.panel)
@@ -109,6 +115,9 @@ class MainWindow(QMainWindow):
         self.panel.debug_toggled.connect(self._on_debug_toggled)
         self.panel.infer_every_n_changed.connect(self._on_interval_changed)
         self.panel.min_face_px_changed.connect(self._on_min_face_changed)
+        self.panel.threshold_changed.connect(self._on_threshold_changed)
+        self.panel.margin_changed.connect(self._on_margin_changed)
+        self.panel.top_k_changed.connect(self._on_top_k_changed)
 
         # -- camera device list (Qt enumeration + hot-plug updates) --
         self._media_devices = QMediaDevices(self)
@@ -129,6 +138,7 @@ class MainWindow(QMainWindow):
                 "Identity database unavailable — enrollment disabled. "
                 "See event log."
             )
+        self._reload_gallery(initial=True)
         if start_inference:
             self._start_inference_worker()
 
@@ -219,7 +229,9 @@ class MainWindow(QMainWindow):
         self.panel.show_fps(0.0)
         self.panel.show_latency(None)
         self.panel.show_face_count(None)
+        self.panel.show_recognition_result(None)
         self._last_result = None
+        self._last_matches = []
         self.video.clear_overlay()
         self.log_event("CAMERA STOPPED")
         if self._pending_restart:
@@ -230,6 +242,9 @@ class MainWindow(QMainWindow):
 
     def _start_inference_worker(self) -> None:
         worker = InferenceWorker()
+        # Recognition needs embeddings on every pass now (CP8+). The
+        # detection-only fast path remains available via this flag.
+        worker.set_embeddings_enabled(True)
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -273,22 +288,114 @@ class MainWindow(QMainWindow):
         if self._cam_worker is None:
             return  # camera stopped while inference was in flight
         self._last_result = result
+        # Match once per result (cheap: microseconds against a small gallery);
+        # overlay refreshes reuse these matches until the next result.
+        self._last_matches = [
+            self._matcher.match(
+                face.embedding,
+                threshold=self._settings.recognition_threshold,
+                margin=self._settings.match_margin,
+                top_k=self._settings.top_k,
+            )
+            if face.embedding is not None
+            else None
+            for face in result.faces
+        ]
         self.panel.show_latency(result.latency_ms)
         self._apply_overlay()
+
+    def _compose_entry(
+        self, face, match: MatchResult | None
+    ) -> OverlayFace:
+        if match is None:
+            label, known = "UNKNOWN", False
+        elif match.is_known:
+            label, known = f"{match.display_name.upper()}  {match.similarity:.2f}", True
+        elif match.similarity is not None:
+            label, known = f"UNKNOWN  {match.similarity:.2f}", False
+        else:
+            label, known = "UNKNOWN", False
+
+        debug_lines: list[str] = [f"DET {face.det_score:.2f}  {face.size_px}PX"]
+        if match is not None:
+            if match.best is not None:
+                debug_lines.append(
+                    f"BEST {match.best.display_name.upper()} {match.best.score:.2f}"
+                )
+            if match.second_best is not None:
+                debug_lines.append(
+                    f"2ND  {match.second_best.display_name.upper()} "
+                    f"{match.second_best.score:.2f}"
+                )
+            debug_lines.append(match.reason)
+        return OverlayFace(
+            face=face, label=label, known=known, debug_lines=tuple(debug_lines)
+        )
 
     def _apply_overlay(self) -> None:
         result = self._last_result
         if result is None:
             return
-        faces = filter_small_faces(result.faces, self._settings.min_face_px)
-        self.panel.show_face_count(len(faces))
+        paired = list(zip(result.faces, self._last_matches))
+        visible = [
+            (face, match)
+            for face, match in paired
+            if face.size_px >= self._settings.min_face_px
+        ]
+        self.panel.show_face_count(len(visible))
+        entries = tuple(
+            self._compose_entry(face, match) for face, match in visible
+        )
         self.video.set_overlay(
-            faces,
+            entries,
             result.frame_w,
             result.frame_h,
             show_landmarks=self._settings.show_landmarks,
             debug=self._settings.debug_mode,
         )
+        known_names = [
+            m.display_name.upper() for _, m in visible if m is not None and m.is_known
+        ]
+        if known_names:
+            self.panel.show_recognition_result(", ".join(known_names))
+        elif visible:
+            self.panel.show_recognition_result("UNKNOWN")
+        else:
+            self.panel.show_recognition_result(None)
+
+    # -- recognition gallery --
+
+    def _reload_gallery(self, initial: bool = False) -> None:
+        if self._store is None:
+            self._matcher = Matcher([])
+            return
+        try:
+            gallery, warnings = build_gallery(self._store, MODEL_PACK)
+        except IdentityStoreError as exc:
+            self._matcher = Matcher([])
+            self.log_event(f"GALLERY LOAD FAILED: {exc}")
+            return
+        self._matcher = Matcher(gallery)
+        for warning in warnings:
+            self.log_event(f"GALLERY WARNING: {warning}")
+        self.log_event(
+            f"GALLERY {'LOADED' if initial else 'RELOADED'}: "
+            f"{self._matcher.identity_count} IDENTITIES, "
+            f"{self._matcher.sample_count} SAMPLES"
+        )
+
+    def _on_threshold_changed(self, value: float) -> None:
+        self._settings.recognition_threshold = value
+        self._save_settings()
+
+    def _on_margin_changed(self, value: float) -> None:
+        self._settings.match_margin = value
+        self._save_settings()
+
+    def _on_top_k_changed(self, value: int) -> None:
+        self._settings.top_k = value
+        self._save_settings()
+        self.log_event(f"TOP-K SET TO {value}")
 
     # -- enrollment --
 
@@ -309,20 +416,19 @@ class MainWindow(QMainWindow):
             self.log_event("ENROLL IGNORED — CAMERA/MODEL/DB NOT READY")
             return
         self.log_event("ENROLLMENT STARTED")
-        self._inf_worker.set_embeddings_enabled(True)
         dialog = EnrollDialog(self._store, MODEL_PACK, parent=self)
         self._inf_worker.result_ready.connect(dialog.handle_result)
         try:
             dialog.exec()
         finally:
             self._inf_worker.result_ready.disconnect(dialog.handle_result)
-            self._inf_worker.set_embeddings_enabled(False)
         if dialog.created_identity is not None:
             record = dialog.created_identity
             self.log_event(
                 f"IDENTITY ENROLLED: {record.display_name.upper()} "
                 f"({record.sample_count} SAMPLES)"
             )
+            self._reload_gallery()
         else:
             self.log_event("ENROLLMENT CANCELED — NOTHING STORED")
 

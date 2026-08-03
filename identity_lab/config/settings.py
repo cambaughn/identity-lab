@@ -14,6 +14,9 @@ SETTINGS_FILENAME = "settings.json"
 
 INFER_EVERY_N_RANGE = (1, 30)
 MIN_FACE_PX_RANGE = (0, 1000)
+THRESHOLD_RANGE = (0.05, 0.95)
+MARGIN_RANGE = (0.0, 0.5)
+TOP_K_RANGE = (1, 10)
 
 
 @dataclass
@@ -23,6 +26,9 @@ class AppSettings:
     debug_mode: bool = False
     infer_every_n: int = 2               # run inference every Nth frame
     min_face_px: int = 60                # ignore faces smaller than this (px)
+    recognition_threshold: float = 0.40  # cosine score a match must clear
+    match_margin: float = 0.08           # best must beat 2nd-best by this
+    top_k: int = 3                       # enrollment samples averaged per score
     window_geometry: str | None = None   # base64-encoded Qt geometry blob
 
 
@@ -32,6 +38,14 @@ def settings_path(data_dir: Path | None = None) -> Path:
 
 def _valid_int(value, lo: int, hi: int) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and lo <= value <= hi
+
+
+def _valid_float(value, lo: float, hi: float) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and lo <= float(value) <= hi
+    )
 
 
 def load_settings(path: Path | None = None) -> AppSettings:
@@ -61,6 +75,15 @@ def load_settings(path: Path | None = None) -> AppSettings:
     v = raw.get("min_face_px")
     if _valid_int(v, *MIN_FACE_PX_RANGE):
         loaded.min_face_px = v
+    v = raw.get("recognition_threshold")
+    if _valid_float(v, *THRESHOLD_RANGE):
+        loaded.recognition_threshold = float(v)
+    v = raw.get("match_margin")
+    if _valid_float(v, *MARGIN_RANGE):
+        loaded.match_margin = float(v)
+    v = raw.get("top_k")
+    if _valid_int(v, *TOP_K_RANGE):
+        loaded.top_k = v
     v = raw.get("window_geometry")
     if isinstance(v, str) or v is None:
         loaded.window_geometry = v
