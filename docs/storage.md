@@ -14,7 +14,7 @@ The file contains biometric-derived data (face embeddings). It never leaves
 the machine, is gitignored, and can be wiped either via
 `IdentityStore.reset_database()` or by deleting the file.
 
-## Schema (version 1)
+## Schema (version 2)
 
 ```sql
 schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT)
@@ -23,7 +23,8 @@ identities(
     id TEXT PRIMARY KEY,              -- uuid4 hex
     display_name TEXT NOT NULL,       -- unique, case-insensitive
     created_at TEXT NOT NULL,         -- ISO-8601 UTC
-    enrollment_version INTEGER NOT NULL
+    enrollment_version INTEGER NOT NULL,
+    thumbnail_png BLOB                -- v2: optional small PNG, see below
 )
 
 embedding_samples(
@@ -71,6 +72,16 @@ To read a blob by hand:
 - Not-a-database files raise `CorruptedDatabaseError`; unopenable paths and
   closed stores raise `DatabaseUnavailableError`; missing ids raise
   `IdentityNotFoundError`; duplicate names raise `DuplicateIdentityError`.
+
+## Thumbnails (schema v2) — a deliberate exception
+
+The project default is "no stored face images." At the owner's explicit
+request, schema v2 adds one optional ~128px PNG face crop per identity,
+captured at the first accepted enrollment sample, **strictly for UI
+presentation** — never used for recognition. It lives in the same row as
+the identity, so deleting the identity or resetting the database removes
+it (with `secure_delete` + VACUUM semantics like everything else). Size is
+capped at 256 KB and PNG magic bytes are validated on write.
 
 ## Other behaviors
 

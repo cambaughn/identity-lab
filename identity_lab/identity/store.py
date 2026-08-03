@@ -39,7 +39,13 @@ from identity_lab.identity.types import (
     IdentityRecord,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+DEFAULT_DB_FILENAME = "identities.db"
+
+# One small PNG per identity is plenty; anything bigger is a caller bug.
+MAX_THUMBNAIL_BYTES = 256 * 1024
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 # Migration statements by version, applied in order inside one transaction
 # each. Never edit an existing migration — add a new version.
@@ -73,6 +79,12 @@ _MIGRATIONS: dict[int, list[str]] = {
         CREATE INDEX idx_samples_identity
             ON embedding_samples (identity_id)
         """,
+    ],
+    # v2: optional representative thumbnail per identity (small PNG face
+    # crop, UI presentation only — a deliberate, owner-approved exception
+    # to the no-stored-images default; see docs/storage.md).
+    2: [
+        "ALTER TABLE identities ADD COLUMN thumbnail_png BLOB",
     ],
 }
 
@@ -316,6 +328,42 @@ class IdentityStore:
             )
             for r in rows
         ]
+
+    # -- thumbnails (UI presentation only, never used for recognition) --
+
+    def set_identity_thumbnail(
+        self, identity_id: str, png_bytes: bytes | None
+    ) -> None:
+        """Attach (or clear, with None) a small PNG thumbnail."""
+        if png_bytes is not None:
+            if not isinstance(png_bytes, (bytes, bytearray)):
+                raise ValueError("thumbnail must be PNG bytes or None")
+            if not bytes(png_bytes).startswith(_PNG_MAGIC):
+                raise ValueError("thumbnail is not a PNG (bad magic bytes)")
+            if len(png_bytes) > MAX_THUMBNAIL_BYTES:
+                raise ValueError(
+                    f"thumbnail too large ({len(png_bytes)} bytes; "
+                    f"max {MAX_THUMBNAIL_BYTES})"
+                )
+        with self._lock:
+            self._require_open()
+            with self._conn:
+                cur = self._conn.execute(
+                    "UPDATE identities SET thumbnail_png = ? WHERE id = ?",
+                    (png_bytes, identity_id),
+                )
+            if cur.rowcount == 0:
+                raise IdentityNotFoundError(f"no identity with id {identity_id!r}")
+
+    def get_identity_thumbnail(self, identity_id: str) -> bytes | None:
+        with self._lock:
+            self._require_open()
+            self._assert_identity_exists(identity_id)
+            row = self._conn.execute(
+                "SELECT thumbnail_png FROM identities WHERE id = ?",
+                (identity_id,),
+            ).fetchone()
+        return row["thumbnail_png"]
 
     # -- maintenance --
 

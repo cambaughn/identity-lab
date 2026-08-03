@@ -24,12 +24,17 @@ class DetectedFace:
 
 @dataclass(frozen=True)
 class InferenceResult:
-    """Output of one inference pass on one frame."""
+    """Output of one inference pass on one frame.
+
+    frame is the analyzed BGR frame (a reference, not a copy) — consumers
+    like enrollment need it for blur checks and thumbnails. Never persisted.
+    """
 
     faces: tuple[DetectedFace, ...]
     latency_ms: float
     frame_w: int
     frame_h: int
+    frame: np.ndarray | None = None
 
 
 def filter_small_faces(

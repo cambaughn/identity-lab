@@ -53,6 +53,7 @@ class ConsoleComboBox(QComboBox):
 class ControlPanel(QWidget):
     start_requested = Signal()
     stop_requested = Signal()
+    enroll_requested = Signal()
     device_selected = Signal(object)      # CameraDeviceInfo
     landmarks_toggled = Signal(bool)
     debug_toggled = Signal(bool)
@@ -92,6 +93,18 @@ class ControlPanel(QWidget):
         cam_layout.addWidget(self.stop_button)
         cam_layout.addWidget(input_label)
         cam_layout.addWidget(self.camera_selector)
+
+        # -- IDENTITY --
+        id_box = QGroupBox("IDENTITY")
+        id_layout = QVBoxLayout(id_box)
+        id_layout.setSpacing(theme.SPACING)
+        self.enroll_button = QPushButton("ENROLL PERSON")
+        self.enroll_button.setEnabled(False)
+        self.enroll_button.setToolTip(
+            "Requires a running camera and a loaded model"
+        )
+        self.enroll_button.clicked.connect(self.enroll_requested)
+        id_layout.addWidget(self.enroll_button)
 
         # -- DETECTION --
         det_box = QGroupBox("DETECTION")
@@ -172,6 +185,7 @@ class ControlPanel(QWidget):
         log_layout.addWidget(self.log_view)
 
         root.addWidget(cam_box)
+        root.addWidget(id_box)
         root.addWidget(det_box)
         root.addWidget(readout_box)
         root.addWidget(log_box)
@@ -257,6 +271,9 @@ class ControlPanel(QWidget):
 
     def show_face_count(self, count: int | None) -> None:
         self.faces_label.setText("FACES --" if count is None else f"FACES {count:02d}")
+
+    def set_enroll_enabled(self, enabled: bool) -> None:
+        self.enroll_button.setEnabled(enabled)
 
     def append_log(self, line: str) -> None:
         self.log_view.appendPlainText(line)

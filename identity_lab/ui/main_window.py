@@ -17,11 +17,20 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWi
 from identity_lab.camera.capture import CameraState, CameraWorker
 from identity_lab.camera.devices import resolve_device, snapshot_devices
 from identity_lab.camera.frames import to_display_qimage
-from identity_lab.config.settings import AppSettings, load_settings, save_settings
+from identity_lab.config.settings import (
+    APP_DATA_DIR,
+    AppSettings,
+    load_settings,
+    save_settings,
+)
 from identity_lab.diagnostics.metrics import FpsCounter, StatusLog
+from identity_lab.identity.errors import IdentityStoreError
+from identity_lab.identity.store import DEFAULT_DB_FILENAME, IdentityStore
 from identity_lab.ui import theme
 from identity_lab.ui.control_panel import ControlPanel
+from identity_lab.ui.enroll_dialog import EnrollDialog
 from identity_lab.ui.video_widget import VideoWidget
+from identity_lab.vision.engine import MODEL_PACK
 from identity_lab.vision.types import InferenceResult, InferenceScheduler, filter_small_faces
 from identity_lab.vision.worker import InferenceWorker, ModelState
 
@@ -33,12 +42,24 @@ CONSENT_NOTICE = (
 
 class MainWindow(QMainWindow):
     def __init__(
-        self, settings_file: Path | None = None, start_inference: bool = True
+        self,
+        settings_file: Path | None = None,
+        start_inference: bool = True,
+        db_path: Path | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("IDENTITY LAB")
         self._settings_file = settings_file
         self._settings: AppSettings = load_settings(settings_file)
+
+        self._store: IdentityStore | None = None
+        self._store_error: str | None = None
+        try:
+            self._store = IdentityStore(
+                db_path or (APP_DATA_DIR / DEFAULT_DB_FILENAME)
+            )
+        except IdentityStoreError as exc:
+            self._store_error = str(exc)
 
         self._cam_thread: QThread | None = None
         self._cam_worker: CameraWorker | None = None
@@ -82,6 +103,7 @@ class MainWindow(QMainWindow):
         # -- panel signals --
         self.panel.start_requested.connect(self.start_camera)
         self.panel.stop_requested.connect(self.stop_camera)
+        self.panel.enroll_requested.connect(self.open_enrollment)
         self.panel.device_selected.connect(self._on_device_selected)
         self.panel.landmarks_toggled.connect(self._on_landmarks_toggled)
         self.panel.debug_toggled.connect(self._on_debug_toggled)
@@ -101,6 +123,12 @@ class MainWindow(QMainWindow):
             self.resize(1040, 640)
 
         self.log_event("SYSTEM START")
+        if self._store_error:
+            self.log_event(f"IDENTITY DB ERROR: {self._store_error}")
+            self.panel.show_message(
+                "Identity database unavailable — enrollment disabled. "
+                "See event log."
+            )
         if start_inference:
             self._start_inference_worker()
 
@@ -217,6 +245,7 @@ class MainWindow(QMainWindow):
         self._model_ready = state_value == ModelState.READY.value
         is_error = state_value == ModelState.ERROR.value
         self.panel.show_model_state(state_value, is_error=is_error)
+        self._update_enroll_enabled()
         self.log_event(state_value)
 
     def _on_inference_error(self, detail: str) -> None:
@@ -261,6 +290,42 @@ class MainWindow(QMainWindow):
             debug=self._settings.debug_mode,
         )
 
+    # -- enrollment --
+
+    def _update_enroll_enabled(self) -> None:
+        self.panel.set_enroll_enabled(
+            self._store is not None
+            and self._model_ready
+            and self._camera_state is CameraState.READY
+        )
+
+    def open_enrollment(self) -> None:
+        if (
+            self._store is None
+            or self._inf_worker is None
+            or not self._model_ready
+            or self._camera_state is not CameraState.READY
+        ):
+            self.log_event("ENROLL IGNORED — CAMERA/MODEL/DB NOT READY")
+            return
+        self.log_event("ENROLLMENT STARTED")
+        self._inf_worker.set_embeddings_enabled(True)
+        dialog = EnrollDialog(self._store, MODEL_PACK, parent=self)
+        self._inf_worker.result_ready.connect(dialog.handle_result)
+        try:
+            dialog.exec()
+        finally:
+            self._inf_worker.result_ready.disconnect(dialog.handle_result)
+            self._inf_worker.set_embeddings_enabled(False)
+        if dialog.created_identity is not None:
+            record = dialog.created_identity
+            self.log_event(
+                f"IDENTITY ENROLLED: {record.display_name.upper()} "
+                f"({record.sample_count} SAMPLES)"
+            )
+        else:
+            self.log_event("ENROLLMENT CANCELED — NOTHING STORED")
+
     # -- camera state handlers --
 
     def _on_camera_state(self, state_value: str) -> None:
@@ -270,6 +335,7 @@ class MainWindow(QMainWindow):
         self._camera_state = state
         self.video.set_state(state)
         self.panel.show_state(state)
+        self._update_enroll_enabled()
         if state is CameraState.READY:
             self.log_event("CAMERA READY")
 
@@ -315,6 +381,8 @@ class MainWindow(QMainWindow):
             if thread is not None:
                 thread.quit()
                 thread.wait(5000)
+        if self._store is not None:
+            self._store.close()
         self._save_settings(include_geometry=True)
         super().closeEvent(event)
 

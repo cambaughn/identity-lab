@@ -340,6 +340,77 @@ def test_newer_schema_version_refused(tmp_path):
         IdentityStore(path)
 
 
+# ---------------------------------------------------------------- thumbnails
+
+PNG_STUB = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+
+
+def test_thumbnail_round_trip_and_clear(store):
+    rec = store.create_identity("Cam")
+    assert store.get_identity_thumbnail(rec.identity_id) is None
+    store.set_identity_thumbnail(rec.identity_id, PNG_STUB)
+    assert store.get_identity_thumbnail(rec.identity_id) == PNG_STUB
+    store.set_identity_thumbnail(rec.identity_id, None)
+    assert store.get_identity_thumbnail(rec.identity_id) is None
+
+
+def test_thumbnail_validation(store):
+    rec = store.create_identity("Cam")
+    with pytest.raises(ValueError):
+        store.set_identity_thumbnail(rec.identity_id, b"JPEG-ish garbage")
+    with pytest.raises(ValueError):
+        store.set_identity_thumbnail(
+            rec.identity_id, b"\x89PNG\r\n\x1a\n" + b"\x00" * (300 * 1024)
+        )
+    with pytest.raises(IdentityNotFoundError):
+        store.set_identity_thumbnail("nope", PNG_STUB)
+    with pytest.raises(IdentityNotFoundError):
+        store.get_identity_thumbnail("nope")
+
+
+def test_migration_v1_database_upgrades_cleanly(tmp_path):
+    """A database created by the v1 code (no thumbnail column) must upgrade
+    in place with data intact."""
+    path = tmp_path / "identities.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+            INSERT INTO schema_migrations VALUES (1, '2026-07-31T00:00:00+00:00');
+            CREATE TABLE identities (
+                id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+                created_at TEXT NOT NULL, enrollment_version INTEGER NOT NULL);
+            CREATE UNIQUE INDEX idx_identities_name
+                ON identities (lower(display_name));
+            CREATE TABLE embedding_samples (
+                id TEXT PRIMARY KEY,
+                identity_id TEXT NOT NULL
+                    REFERENCES identities(id) ON DELETE CASCADE,
+                embedding BLOB NOT NULL, dim INTEGER NOT NULL,
+                dtype TEXT NOT NULL, model_id TEXT NOT NULL,
+                created_at TEXT NOT NULL);
+            CREATE INDEX idx_samples_identity
+                ON embedding_samples (identity_id);
+            INSERT INTO identities VALUES
+                ('abc', 'Cam', '2026-07-31T00:00:00+00:00', 1);
+            """
+        )
+    with IdentityStore(path) as store:
+        rec = store.get_identity("abc")
+        assert rec.display_name == "Cam"
+        assert store.get_identity_thumbnail("abc") is None  # column added
+        store.set_identity_thumbnail("abc", PNG_STUB)
+        assert store.get_identity_thumbnail("abc") == PNG_STUB
+    with sqlite3.connect(path) as conn:
+        versions = [
+            r[0] for r in conn.execute(
+                "SELECT version FROM schema_migrations ORDER BY version"
+            )
+        ]
+    assert versions == [1, 2]
+
+
 # ---------------------------------------------------------------- reset
 
 def test_reset_database_clears_everything_and_store_remains_usable(store):

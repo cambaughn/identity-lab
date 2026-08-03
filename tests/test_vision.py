@@ -70,13 +70,15 @@ class FakeEngine:
         self.analyze_error = analyze_error
         self.on_analyze = on_analyze
         self.analyzed_frames = []
+        self.embedding_flags = []
 
     def initialize(self):
         if self.init_error:
             raise self.init_error
 
-    def analyze(self, frame):
+    def analyze(self, frame, with_embeddings=False):
         self.analyzed_frames.append(frame)
+        self.embedding_flags.append(with_embeddings)
         if self.on_analyze:
             self.on_analyze(self)
         if self.analyze_error:
@@ -144,6 +146,24 @@ def test_worker_analyze_errors_do_not_kill_until_threshold():
     assert states[-1] == ModelState.ERROR.value
     assert any("repeatedly" in e for e in errors)
     assert results == []
+
+
+def test_worker_embeddings_flag_reaches_engine():
+    engine = FakeEngine(on_analyze=lambda e: worker.request_stop())
+    worker = InferenceWorker(engine_factory=lambda: engine)
+    worker.set_embeddings_enabled(True)
+    worker.submit(frame_with_marker(1))
+    run_worker(worker)
+    assert engine.embedding_flags == [True]
+
+
+def test_worker_embeddings_default_off():
+    engine = FakeEngine(on_analyze=lambda e: worker.request_stop())
+    worker = InferenceWorker(engine_factory=lambda: engine)
+    worker.submit(frame_with_marker(1))
+    _, _, results = run_worker(worker)
+    assert engine.embedding_flags == [False]
+    assert results[0].frame is not None  # analyzed frame rides along
 
 
 def test_worker_stop_before_run_exits_cleanly():

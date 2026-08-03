@@ -154,6 +154,18 @@ def stylesheet() -> str:
         background: {AMBER};
         border-radius: {RADIUS}px;
     }}
+    QLineEdit {{
+        background-color: {BG_PANEL};
+        border: {BORDER_W}px solid {AMBER_DIM};
+        border-radius: {RADIUS}px;
+        color: {AMBER};
+        padding: {PAD - 2}px {PAD}px;
+        selection-background-color: {AMBER};
+        selection-color: {BG};
+    }}
+    QLineEdit:focus {{
+        border-color: {AMBER};
+    }}
     QPlainTextEdit {{
         background-color: {BG};
         color: {AMBER_DIM};

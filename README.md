@@ -35,6 +35,16 @@ hosting application, and Terminal is the one that has it (see
 .venv/bin/python -m identity_lab
 ```
 
+## Known limitations (current)
+
+- Enrollment pose prompts (FORWARD/LEFT/RIGHT/UP/DOWN) are guidance, not
+  verified — samples are captured on a timer with quality gates (face
+  present, size, confidence, blur, embedding consistency), but the app does
+  not confirm the head actually turned or that the face is unoccluded.
+  Planned refinement: a simple yaw/pitch proxy from the 5-point landmarks
+  to gate each pose stage (deferred until recognition exists to measure
+  whether it improves matching).
+
 ## Tests (no webcam required)
 
 ```bash

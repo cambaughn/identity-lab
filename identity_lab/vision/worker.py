@@ -36,12 +36,18 @@ class InferenceWorker(QObject):
         self._latest = LatestFrame()
         self._wake = threading.Event()
         self._stop = threading.Event()
+        self._with_embeddings = False
 
     # -- producer API (any thread) --
 
     def submit(self, frame) -> None:
         self._latest.put(frame)
         self._wake.set()
+
+    def set_embeddings_enabled(self, enabled: bool) -> None:
+        """Embeddings cost ~50ms/face; only enrollment/recognition need them.
+        Plain bool assignment — atomic in CPython, read once per loop pass."""
+        self._with_embeddings = enabled
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -77,7 +83,9 @@ class InferenceWorker(QObject):
                     continue
                 try:
                     t0 = time.perf_counter()
-                    faces = engine.analyze(frame)
+                    faces = engine.analyze(
+                        frame, with_embeddings=self._with_embeddings
+                    )
                     latency_ms = (time.perf_counter() - t0) * 1000
                 except Exception as exc:
                     failures += 1
@@ -93,7 +101,11 @@ class InferenceWorker(QObject):
                 h, w = frame.shape[:2]
                 self.result_ready.emit(
                     InferenceResult(
-                        faces=faces, latency_ms=latency_ms, frame_w=w, frame_h=h
+                        faces=faces,
+                        latency_ms=latency_ms,
+                        frame_w=w,
+                        frame_h=h,
+                        frame=frame,
                     )
                 )
         finally:
