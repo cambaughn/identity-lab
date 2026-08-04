@@ -27,6 +27,9 @@ from identity_lab.diagnostics.metrics import FpsCounter, StatusLog
 from identity_lab.identity.errors import IdentityStoreError
 from identity_lab.identity.matcher import Matcher, MatchResult, build_gallery
 from identity_lab.identity.store import DEFAULT_DB_FILENAME, IdentityStore
+from identity_lab.identity.types import IdentityObservation
+from identity_lab.tracking.stabilizer import IdentityStabilizer
+from identity_lab.tracking.tracker import FaceTracker
 from identity_lab.ui import theme
 from identity_lab.ui.control_panel import ControlPanel
 from identity_lab.ui.enroll_dialog import EnrollDialog
@@ -72,8 +75,10 @@ class MainWindow(QMainWindow):
         self._model_ready = False
         self._scheduler = InferenceScheduler(every_n=self._settings.infer_every_n)
         self._last_result: InferenceResult | None = None
-        self._last_matches: list[MatchResult | None] = []
+        self._last_entries: list[tuple] = []  # (face, match, observation)
         self._matcher = Matcher([])
+        self._tracker = FaceTracker()
+        self._stabilizer = IdentityStabilizer()
 
         self._fps = FpsCounter()
         self._status_log = StatusLog()
@@ -231,7 +236,9 @@ class MainWindow(QMainWindow):
         self.panel.show_face_count(None)
         self.panel.show_recognition_result(None)
         self._last_result = None
-        self._last_matches = []
+        self._last_entries = []
+        self._tracker.reset()
+        self._stabilizer.reset()
         self.video.clear_overlay()
         self.log_event("CAMERA STOPPED")
         if self._pending_restart:
@@ -288,35 +295,45 @@ class MainWindow(QMainWindow):
         if self._cam_worker is None:
             return  # camera stopped while inference was in flight
         self._last_result = result
-        # Match once per result (cheap: microseconds against a small gallery);
-        # overlay refreshes reuse these matches until the next result.
-        self._last_matches = [
-            self._matcher.match(
-                face.embedding,
-                threshold=self._settings.recognition_threshold,
-                margin=self._settings.match_margin,
-                top_k=self._settings.top_k,
+        # Pipeline per result: size-filter -> track -> match -> stabilize.
+        faces = filter_small_faces(result.faces, self._settings.min_face_px)
+        tracked = self._tracker.update(faces)
+        entries = []
+        for track_id, face in tracked:
+            match = (
+                self._matcher.match(
+                    face.embedding,
+                    threshold=self._settings.recognition_threshold,
+                    margin=self._settings.match_margin,
+                    top_k=self._settings.top_k,
+                )
+                if face.embedding is not None
+                else None
             )
-            if face.embedding is not None
-            else None
-            for face in result.faces
-        ]
+            observation = self._stabilizer.observe(track_id, match, face.bbox)
+            entries.append((face, match, observation))
+        for dead_track in self._tracker.pop_expired():
+            self._stabilizer.forget(dead_track)
+        self._last_entries = entries
         self.panel.show_latency(result.latency_ms)
         self._apply_overlay()
 
     def _compose_entry(
-        self, face, match: MatchResult | None
+        self, face, match: MatchResult | None, obs: IdentityObservation
     ) -> OverlayFace:
-        if match is None:
-            label, known = "UNKNOWN", False
-        elif match.is_known:
-            label, known = f"{match.display_name.upper()}  {match.similarity:.2f}", True
-        elif match.similarity is not None:
-            label, known = f"UNKNOWN  {match.similarity:.2f}", False
+        if obs.is_known:
+            label = f"{obs.display_name.upper()}"
+            if obs.similarity is not None:
+                label += f"  {obs.similarity:.2f}"
+            known = True
+        elif obs.similarity is not None:
+            label, known = f"UNKNOWN  {obs.similarity:.2f}", False
         else:
             label, known = "UNKNOWN", False
 
-        debug_lines: list[str] = [f"DET {face.det_score:.2f}  {face.size_px}PX"]
+        debug_lines: list[str] = [
+            f"TRACK {obs.track_id}  DET {face.det_score:.2f}  {face.size_px}PX"
+        ]
         if match is not None:
             if match.best is not None:
                 debug_lines.append(
@@ -327,7 +344,7 @@ class MainWindow(QMainWindow):
                     f"2ND  {match.second_best.display_name.upper()} "
                     f"{match.second_best.score:.2f}"
                 )
-            debug_lines.append(match.reason)
+        debug_lines.append(obs.reason)
         return OverlayFace(
             face=face, label=label, known=known, debug_lines=tuple(debug_lines)
         )
@@ -336,29 +353,24 @@ class MainWindow(QMainWindow):
         result = self._last_result
         if result is None:
             return
-        paired = list(zip(result.faces, self._last_matches))
-        visible = [
-            (face, match)
-            for face, match in paired
-            if face.size_px >= self._settings.min_face_px
-        ]
-        self.panel.show_face_count(len(visible))
-        entries = tuple(
-            self._compose_entry(face, match) for face, match in visible
+        entries = self._last_entries
+        self.panel.show_face_count(len(entries))
+        overlay = tuple(
+            self._compose_entry(face, match, obs) for face, match, obs in entries
         )
         self.video.set_overlay(
-            entries,
+            overlay,
             result.frame_w,
             result.frame_h,
             show_landmarks=self._settings.show_landmarks,
             debug=self._settings.debug_mode,
         )
         known_names = [
-            m.display_name.upper() for _, m in visible if m is not None and m.is_known
+            obs.display_name.upper() for _, _, obs in entries if obs.is_known
         ]
         if known_names:
             self.panel.show_recognition_result(", ".join(known_names))
-        elif visible:
+        elif entries:
             self.panel.show_recognition_result("UNKNOWN")
         else:
             self.panel.show_recognition_result(None)
@@ -376,6 +388,9 @@ class MainWindow(QMainWindow):
             self.log_event(f"GALLERY LOAD FAILED: {exc}")
             return
         self._matcher = Matcher(gallery)
+        # Stabilized names may reference identities that just changed;
+        # drop all held decisions so the new gallery takes effect at once.
+        self._stabilizer.reset()
         for warning in warnings:
             self.log_event(f"GALLERY WARNING: {warning}")
         self.log_event(

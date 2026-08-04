@@ -134,6 +134,16 @@ time-spread frontal-ish samples. Pose verification remains a nice-to-have
 Latency with embeddings enabled on every pass: ~150–250 ms per inference
 (vs ~130 ms detection-only), as expected.
 
+## Temporal stabilization (CP9, 2026-08-03) — manually verified
+
+Live verification passed: stable labels through normal and fast movement,
+`HOLD n/6` through brief occlusion without losing the name, new
+(never-reused, ascending) track id + re-promotion after leaving and
+returning, steady stabilized label with sunglasses despite raw-similarity
+variation. Parameters: promote after 3 agreeing observations, switch names
+after 5 consecutive, decay to UNKNOWN after 6 consecutive misses, track
+expiry 1.5 s (~5 inference updates).
+
 ## Camera device mapping (CP5, 2026-07-30)
 
 Camera names come from Qt (`QMediaDevices.videoInputs()`), which enumerates

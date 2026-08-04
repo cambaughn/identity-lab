@@ -19,6 +19,27 @@ class IdentityRecord:
     dim: int | None        # None until the first sample is stored
 
 
+@dataclass(frozen=True)
+class IdentityObservation:
+    """One stabilized per-track recognition observation (spec structure).
+
+    identity/display_name reflect the *stabilized* decision; similarity and
+    second_best_similarity are the raw scores from the current frame's match
+    (None when the frame had no usable match). reason explains the current
+    stabilizer state in console language.
+    """
+
+    track_id: str
+    identity_id: str | None
+    display_name: str | None
+    similarity: float | None
+    second_best_similarity: float | None
+    is_known: bool
+    reason: str
+    bbox: tuple[int, int, int, int]
+    timestamp: datetime
+
+
 @dataclass(frozen=True, eq=False)  # eq=False: ndarray members don't compare
 class EmbeddingSample:
     sample_id: str
