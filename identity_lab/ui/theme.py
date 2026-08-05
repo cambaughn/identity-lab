@@ -75,6 +75,30 @@ def stylesheet() -> str:
         border-color: {AMBER_FAINT};
         color: {AMBER_FAINT};
     }}
+    QPushButton#danger {{
+        border-color: {ERROR};
+        color: {ERROR};
+    }}
+    QPushButton#danger:pressed {{
+        background-color: {ERROR};
+        color: {BG};
+    }}
+    QListWidget {{
+        background-color: {BG};
+        border: {BORDER_W}px solid {AMBER_DIM};
+        border-radius: {RADIUS}px;
+        color: {AMBER};
+        outline: none;
+    }}
+    QListWidget::item {{
+        padding: {PAD}px;
+        border-bottom: {BORDER_W}px solid {AMBER_FAINT};
+    }}
+    QListWidget::item:selected {{
+        background-color: #1a1608;
+        color: {AMBER};
+        border-left: 2px solid {AMBER};
+    }}
     QComboBox {{
         background-color: {BG_PANEL};
         border: {BORDER_W}px solid {AMBER_DIM};

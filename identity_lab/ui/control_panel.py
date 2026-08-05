@@ -54,6 +54,7 @@ class ControlPanel(QWidget):
     start_requested = Signal()
     stop_requested = Signal()
     enroll_requested = Signal()
+    manage_requested = Signal()
     device_selected = Signal(object)      # CameraDeviceInfo
     landmarks_toggled = Signal(bool)
     debug_toggled = Signal(bool)
@@ -110,7 +111,10 @@ class ControlPanel(QWidget):
             "Requires a running camera and a loaded model"
         )
         self.enroll_button.clicked.connect(self.enroll_requested)
+        self.manage_button = QPushButton("MANAGE IDENTITIES")
+        self.manage_button.clicked.connect(self.manage_requested)
         id_layout.addWidget(self.enroll_button)
+        id_layout.addWidget(self.manage_button)
 
         # -- DETECTION --
         det_box = QGroupBox("DETECTION")

@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         self.panel.start_requested.connect(self.start_camera)
         self.panel.stop_requested.connect(self.stop_camera)
         self.panel.enroll_requested.connect(self.open_enrollment)
+        self.panel.manage_requested.connect(self.open_manage)
         self.panel.device_selected.connect(self._on_device_selected)
         self.panel.landmarks_toggled.connect(self._on_landmarks_toggled)
         self.panel.debug_toggled.connect(self._on_debug_toggled)
@@ -143,6 +144,7 @@ class MainWindow(QMainWindow):
                 "Identity database unavailable — enrollment disabled. "
                 "See event log."
             )
+            self.panel.manage_button.setEnabled(False)
         self._reload_gallery(initial=True)
         if start_inference:
             self._start_inference_worker()
@@ -446,6 +448,18 @@ class MainWindow(QMainWindow):
             self._reload_gallery()
         else:
             self.log_event("ENROLLMENT CANCELED — NOTHING STORED")
+
+    def open_manage(self) -> None:
+        if self._store is None:
+            self.log_event("MANAGE IGNORED — IDENTITY DB UNAVAILABLE")
+            return
+        self.log_event("IDENTITY MANAGER OPENED")
+        from identity_lab.ui.manage_dialog import ManageDialog
+
+        dialog = ManageDialog(self._store, parent=self)
+        dialog.identities_changed.connect(lambda: self._reload_gallery())
+        dialog.exec()
+        self.log_event("IDENTITY MANAGER CLOSED")
 
     # -- camera state handlers --
 
