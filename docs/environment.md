@@ -144,6 +144,44 @@ variation. Parameters: promote after 3 agreeing observations, switch names
 after 5 consecutive, decay to UNKNOWN after 6 consecutive misses, track
 expiry 1.5 s (~5 inference updates).
 
+## Smooth tracking pipeline (CP10.5, 2026-08-04)
+
+Three rates: preview ~30 fps; **sparse Lucas–Kanade optical flow** moves
+each track's displayed box on every preview frame (measured pixel motion on
+a half-res grayscale image — median point translation + spread-based scale;
+never interpolation); full detection corrects drift at the INFER INTERVAL
+cadence (~5–7 Hz); embeddings/recognition run adaptively — every detection
+pass while any visible track lacks a confirmed name, then relaxed to ~2/s.
+
+Flow cost measured: median ~4.5 ms/frame at 1080p with two tracks
+(synthetic worst-case texture) on the UI thread — inside the 33 ms budget.
+
+Failure semantics: incoherent point motion (MAD gate), oversized single-
+frame jumps, or too few valid points put the track in COAST (box frozen,
+shown in debug) until the next detection re-anchors or the track expires.
+Detection re-anchors are staleness-compensated (the detection is shifted by
+the flow motion accumulated since its frame was submitted, via submit
+tokens), deadbanded, gently blended when healthy, and snapped when
+coasting or grossly disagreeing. Scale changes are damped and deadbanded
+to prevent size "breathing". Flow points reseed on every anchor. Det-only
+passes never count as recognition misses against a stabilized name.
+
+**Outcome (manually verified 2026-08-04/05):** optical flow materially
+improves box movement — described by the user as "10x better" in both size
+stability and smoothness versus the detection-cadence boxes.
+
+**Known limitation (accepted for v0.1):** sufficiently fast head motion
+exceeds optical flow's capture range; the track can coast, fail IOU
+association with the next detection, and be recreated — visible as a box
+jump and a brief identity re-confirmation (PENDING → name). Understood and
+deliberately not addressed in v0.1.
+
+**Possible future work (documented, NOT implemented):** Kalman/SORT-style
+constant-velocity prediction with association against predicted boxes;
+ByteTrack-style low-confidence detection association to bridge motion
+blur; embedding-based re-association of new tracks to recently dead
+confirmed tracks (DeepSORT-style).
+
 ## Camera device mapping (CP5, 2026-07-30)
 
 Camera names come from Qt (`QMediaDevices.videoInputs()`), which enumerates

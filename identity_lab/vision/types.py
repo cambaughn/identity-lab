@@ -35,6 +35,8 @@ class InferenceResult:
     frame_w: int
     frame_h: int
     frame: np.ndarray | None = None
+    has_embeddings: bool = True  # False for detection-only passes
+    token: int = 0               # caller's submit token, echoed back
 
 
 def filter_small_faces(

@@ -28,6 +28,7 @@ from identity_lab.identity.errors import IdentityStoreError
 from identity_lab.identity.matcher import Matcher, MatchResult, build_gallery
 from identity_lab.identity.store import DEFAULT_DB_FILENAME, IdentityStore
 from identity_lab.identity.types import IdentityObservation
+from identity_lab.tracking.flow import FlowTracker, bbox_center, compensate_bbox
 from identity_lab.tracking.stabilizer import IdentityStabilizer
 from identity_lab.tracking.tracker import FaceTracker
 from identity_lab.ui import theme
@@ -37,6 +38,12 @@ from identity_lab.ui.video_widget import OverlayFace, VideoWidget
 from identity_lab.vision.engine import MODEL_PACK
 from identity_lab.vision.types import InferenceResult, InferenceScheduler, filter_small_faces
 from identity_lab.vision.worker import InferenceWorker, ModelState
+
+import time
+
+# Once every visible track has a confirmed name, recognition relaxes to
+# this cadence; unconfirmed tracks get recognition on every detection pass.
+REC_INTERVAL_S = 0.5
 
 CONSENT_NOTICE = (
     "EXPERIMENTAL LOCAL FACE-RECOGNITION RESEARCH TOOL — USE ONLY WITH THE "
@@ -75,12 +82,23 @@ class MainWindow(QMainWindow):
         self._model_ready = False
         self._scheduler = InferenceScheduler(every_n=self._settings.infer_every_n)
         self._last_result: InferenceResult | None = None
-        self._last_entries: list[tuple] = []  # (face, match, observation)
+        self._last_entries: list[tuple] = []  # (track_id, face, match, obs)
+        self._track_results: dict[str, tuple] = {}  # track_id -> (match, obs)
         self._matcher = Matcher([])
         self._tracker = FaceTracker()
         self._stabilizer = IdentityStabilizer()
+        self._flow = FlowTracker()
+        self._last_rec_t = 0.0
+        self._enrolling = False
+        self._submit_token = 0
+        self._submit_snapshots: dict[int, dict] = {}  # token -> flow boxes
 
         self._fps = FpsCounter()
+        self._track_rate = FpsCounter()
+        self._det_rate = FpsCounter()
+        self._rec_rate = FpsCounter()
+        self._det_ms: float | None = None
+        self._rec_ms: float | None = None
         self._status_log = StatusLog()
 
         # -- layout --
@@ -234,13 +252,23 @@ class MainWindow(QMainWindow):
         self._cam_thread = None
         self.panel.set_running(False)
         self.panel.show_fps(0.0)
-        self.panel.show_latency(None)
+        self.panel.show_track_rate(None)
+        self.panel.show_det_stats(None, None)
+        self.panel.show_rec_stats(None, None)
         self.panel.show_face_count(None)
         self.panel.show_recognition_result(None)
         self._last_result = None
         self._last_entries = []
+        self._track_results.clear()
         self._tracker.reset()
         self._stabilizer.reset()
+        self._flow.reset()
+        self._submit_snapshots.clear()
+        self._track_rate.reset()
+        self._det_rate.reset()
+        self._rec_rate.reset()
+        self._det_ms = None
+        self._rec_ms = None
         self.video.clear_overlay()
         self.log_event("CAMERA STOPPED")
         if self._pending_restart:
@@ -250,10 +278,9 @@ class MainWindow(QMainWindow):
     # -- inference worker lifecycle --
 
     def _start_inference_worker(self) -> None:
+        # Embeddings are requested per submitted frame (adaptive cadence,
+        # see _want_embeddings) — no worker-level flag anymore.
         worker = InferenceWorker()
-        # Recognition needs embeddings on every pass now (CP8+). The
-        # detection-only fast path remains available via this flag.
-        worker.set_embeddings_enabled(True)
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -286,44 +313,111 @@ class MainWindow(QMainWindow):
         self._fps.tick()
         self.panel.show_fps(self._fps.fps)
         self.video.set_frame(to_display_qimage(frame, mirrored=True))
+
+        # Flow tracking: advance displayed boxes by measured pixel motion
+        # on (nearly) every preview frame.
+        if self._last_entries:
+            self._flow.step(frame)
+            self._track_rate.tick()
+            self.panel.show_track_rate(self._track_rate.fps)
+            self._apply_overlay()
+
         if (
             self._model_ready
             and self._inf_worker is not None
             and self._scheduler.should_submit()
         ):
-            self._inf_worker.submit(frame)
+            # Snapshot flow boxes so the eventual (stale) result can be
+            # shifted by whatever motion happens while it is computed.
+            self._submit_token += 1
+            self._submit_snapshots[self._submit_token] = self._flow.boxes()
+            if len(self._submit_snapshots) > 8:
+                oldest = min(self._submit_snapshots)
+                self._submit_snapshots.pop(oldest, None)
+            self._inf_worker.submit(
+                frame, self._want_embeddings(), token=self._submit_token
+            )
+
+    def _want_embeddings(self) -> bool:
+        """Adaptive recognition cadence: eager while any visible track lacks
+        a confirmed name (or none are known yet — embeddings cost nothing on
+        faceless frames), relaxed to REC_INTERVAL_S once all names lock in.
+        Enrollment needs an embedding on every pass."""
+        if self._enrolling or not self._last_entries:
+            return True
+        if any(
+            not self._stabilizer.is_confirmed(tid)
+            for tid, _, _, _ in self._last_entries
+        ):
+            return True
+        return time.monotonic() - self._last_rec_t >= REC_INTERVAL_S
 
     def _on_inference_result(self, result: InferenceResult) -> None:
         if self._cam_worker is None:
             return  # camera stopped while inference was in flight
         self._last_result = result
-        # Pipeline per result: size-filter -> track -> match -> stabilize.
+        # Detector pass: size-filter -> associate tracks -> re-anchor flow;
+        # recognition passes additionally match + stabilize per track.
         faces = filter_small_faces(result.faces, self._settings.min_face_px)
         tracked = self._tracker.update(faces)
+        snapshot = self._submit_snapshots.pop(result.token, {})
+        self._submit_snapshots = {
+            k: v for k, v in self._submit_snapshots.items() if k > result.token
+        }
+        flow_now = self._flow.boxes()
         entries = []
         for track_id, face in tracked:
-            match = (
-                self._matcher.match(
-                    face.embedding,
-                    threshold=self._settings.recognition_threshold,
-                    margin=self._settings.match_margin,
-                    top_k=self._settings.top_k,
-                )
-                if face.embedding is not None
-                else None
+            # Shift the stale detection by the flow motion since submit,
+            # so anchoring never drags a moving box backward in time.
+            corrected = compensate_bbox(
+                face.bbox,
+                bbox_center(snapshot[track_id]) if track_id in snapshot else None,
+                bbox_center(flow_now[track_id]) if track_id in flow_now else None,
             )
-            observation = self._stabilizer.observe(track_id, match, face.bbox)
-            entries.append((face, match, observation))
+            self._flow.anchor(track_id, corrected)
+            if result.has_embeddings:
+                match = (
+                    self._matcher.match(
+                        face.embedding,
+                        threshold=self._settings.recognition_threshold,
+                        margin=self._settings.match_margin,
+                        top_k=self._settings.top_k,
+                    )
+                    if face.embedding is not None
+                    else None
+                )
+                observation = self._stabilizer.observe(track_id, match, face.bbox)
+                self._track_results[track_id] = (match, observation)
+            match, observation = self._track_results.get(track_id, (None, None))
+            entries.append((track_id, face, match, observation))
         for dead_track in self._tracker.pop_expired():
             self._stabilizer.forget(dead_track)
+            self._flow.forget(dead_track)
+            self._track_results.pop(dead_track, None)
         self._last_entries = entries
-        self.panel.show_latency(result.latency_ms)
+
+        self._det_rate.tick()
+        if result.has_embeddings:
+            self._rec_ms = result.latency_ms
+            self._rec_rate.tick()
+            self._last_rec_t = time.monotonic()
+        else:
+            self._det_ms = result.latency_ms
+        self.panel.show_det_stats(self._det_ms, self._det_rate.fps)
+        self.panel.show_rec_stats(self._rec_ms, self._rec_rate.fps)
         self._apply_overlay()
 
     def _compose_entry(
-        self, face, match: MatchResult | None, obs: IdentityObservation
+        self,
+        track_id: str,
+        face,
+        match: MatchResult | None,
+        obs: IdentityObservation | None,
+        bbox: tuple[int, int, int, int],
     ) -> OverlayFace:
-        if obs.is_known:
+        if obs is None:
+            label, known = "UNKNOWN", False
+        elif obs.is_known:
             label = f"{obs.display_name.upper()}"
             if obs.similarity is not None:
                 label += f"  {obs.similarity:.2f}"
@@ -333,9 +427,10 @@ class MainWindow(QMainWindow):
         else:
             label, known = "UNKNOWN", False
 
-        debug_lines: list[str] = [
-            f"TRACK {obs.track_id}  DET {face.det_score:.2f}  {face.size_px}PX"
-        ]
+        first = f"TRACK {track_id}  DET {face.det_score:.2f}  {face.size_px}PX"
+        if self._flow.is_coasting(track_id):
+            first += "  COAST"
+        debug_lines: list[str] = [first]
         if match is not None:
             if match.best is not None:
                 debug_lines.append(
@@ -346,9 +441,23 @@ class MainWindow(QMainWindow):
                     f"2ND  {match.second_best.display_name.upper()} "
                     f"{match.second_best.score:.2f}"
                 )
-        debug_lines.append(obs.reason)
+        debug_lines.append(obs.reason if obs is not None else "AWAITING RECOGNITION")
+
+        # Landmarks came from the last detection; shift them by the flow
+        # box's displacement so they ride along with the displayed box.
+        landmarks = face.landmarks
+        if landmarks is not None:
+            dx = (bbox[0] + bbox[2]) / 2 - (face.bbox[0] + face.bbox[2]) / 2
+            dy = (bbox[1] + bbox[3]) / 2 - (face.bbox[1] + face.bbox[3]) / 2
+            if dx or dy:
+                landmarks = landmarks + (dx, dy)
         return OverlayFace(
-            face=face, label=label, known=known, debug_lines=tuple(debug_lines)
+            face=face,
+            bbox=bbox,
+            label=label,
+            known=known,
+            debug_lines=tuple(debug_lines),
+            landmarks=landmarks,
         )
 
     def _apply_overlay(self) -> None:
@@ -356,9 +465,13 @@ class MainWindow(QMainWindow):
         if result is None:
             return
         entries = self._last_entries
+        flow_boxes = self._flow.boxes()
         self.panel.show_face_count(len(entries))
         overlay = tuple(
-            self._compose_entry(face, match, obs) for face, match, obs in entries
+            self._compose_entry(
+                track_id, face, match, obs, flow_boxes.get(track_id, face.bbox)
+            )
+            for track_id, face, match, obs in entries
         )
         self.video.set_overlay(
             overlay,
@@ -368,7 +481,9 @@ class MainWindow(QMainWindow):
             debug=self._settings.debug_mode,
         )
         known_names = [
-            obs.display_name.upper() for _, _, obs in entries if obs.is_known
+            obs.display_name.upper()
+            for _, _, _, obs in entries
+            if obs is not None and obs.is_known
         ]
         if known_names:
             self.panel.show_recognition_result(", ".join(known_names))
@@ -393,6 +508,7 @@ class MainWindow(QMainWindow):
         # Stabilized names may reference identities that just changed;
         # drop all held decisions so the new gallery takes effect at once.
         self._stabilizer.reset()
+        self._track_results.clear()
         for warning in warnings:
             self.log_event(f"GALLERY WARNING: {warning}")
         self.log_event(
@@ -435,9 +551,11 @@ class MainWindow(QMainWindow):
         self.log_event("ENROLLMENT STARTED")
         dialog = EnrollDialog(self._store, MODEL_PACK, parent=self)
         self._inf_worker.result_ready.connect(dialog.handle_result)
+        self._enrolling = True
         try:
             dialog.exec()
         finally:
+            self._enrolling = False
             self._inf_worker.result_ready.disconnect(dialog.handle_result)
         if dialog.created_identity is not None:
             record = dialog.created_identity

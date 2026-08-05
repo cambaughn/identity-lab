@@ -148,13 +148,13 @@ def test_worker_analyze_errors_do_not_kill_until_threshold():
     assert results == []
 
 
-def test_worker_embeddings_flag_reaches_engine():
+def test_worker_per_frame_embeddings_flag_reaches_engine():
     engine = FakeEngine(on_analyze=lambda e: worker.request_stop())
     worker = InferenceWorker(engine_factory=lambda: engine)
-    worker.set_embeddings_enabled(True)
-    worker.submit(frame_with_marker(1))
-    run_worker(worker)
+    worker.submit(frame_with_marker(1), with_embeddings=True)
+    _, _, results = run_worker(worker)
     assert engine.embedding_flags == [True]
+    assert results[0].has_embeddings is True
 
 
 def test_worker_embeddings_default_off():
@@ -163,7 +163,19 @@ def test_worker_embeddings_default_off():
     worker.submit(frame_with_marker(1))
     _, _, results = run_worker(worker)
     assert engine.embedding_flags == [False]
+    assert results[0].has_embeddings is False
     assert results[0].frame is not None  # analyzed frame rides along
+
+
+def test_worker_latest_wins_keeps_newest_flag_and_token():
+    engine = FakeEngine(on_analyze=lambda e: worker.request_stop())
+    worker = InferenceWorker(engine_factory=lambda: engine)
+    worker.submit(frame_with_marker(1), with_embeddings=False, token=7)
+    worker.submit(frame_with_marker(2), with_embeddings=True, token=8)
+    _, _, results = run_worker(worker)
+    assert engine.analyzed_frames[0][0, 0, 0] == 2
+    assert engine.embedding_flags == [True]
+    assert results[0].token == 8  # token rides with its frame
 
 
 def test_worker_stop_before_run_exits_cleanly():

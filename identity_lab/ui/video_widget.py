@@ -17,12 +17,18 @@ LABEL_FONT_PX = 13
 
 @dataclass(frozen=True)
 class OverlayFace:
-    """One face plus its display strings (composed by the main window)."""
+    """One face plus its display geometry/strings (composed upstream).
+
+    bbox is the *displayed* box — flow-tracked between detector passes, so
+    it may differ from face.bbox (the last detection). landmarks are already
+    shifted to match bbox."""
 
     face: DetectedFace
+    bbox: tuple[int, int, int, int]
     label: str                          # "CAM 0.62" or "UNKNOWN"
     known: bool
     debug_lines: tuple[str, ...] = field(default_factory=tuple)
+    landmarks: object = None            # np.ndarray (106, 2) or None
 
 
 class VideoWidget(QWidget):
@@ -118,7 +124,7 @@ class VideoWidget(QWidget):
             box_pen.setWidth(theme.BORDER_W)
             # NOTE: the overlay mirror must match the preview mirror.
             x, y, w, h = map_bbox(
-                face.bbox, frame_w, scale, off_x, off_y, mirrored=True
+                entry.bbox, frame_w, scale, off_x, off_y, mirrored=True
             )
             painter.setPen(box_pen)
             painter.drawRect(QRectF(x, y, w, h))
@@ -152,11 +158,11 @@ class VideoWidget(QWidget):
                         f" {line}",
                     )
 
-            if self._show_landmarks and face.landmarks is not None:
+            if self._show_landmarks and entry.landmarks is not None:
                 painter.setPen(landmark_pen)
                 points = [
                     QPointF(*map_point((px, py), frame_w, scale, off_x, off_y))
-                    for px, py in face.landmarks
+                    for px, py in entry.landmarks
                 ]
                 painter.drawPoints(points)
 

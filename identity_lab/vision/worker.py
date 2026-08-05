@@ -36,18 +36,16 @@ class InferenceWorker(QObject):
         self._latest = LatestFrame()
         self._wake = threading.Event()
         self._stop = threading.Event()
-        self._with_embeddings = False
 
     # -- producer API (any thread) --
 
-    def submit(self, frame) -> None:
-        self._latest.put(frame)
+    def submit(self, frame, with_embeddings: bool = False, token: int = 0) -> None:
+        """Queue a frame (latest wins). with_embeddings requests the ~50ms/
+        face recognition pass in addition to detection — the caller decides
+        per frame (adaptive recognition cadence). token is an opaque caller
+        id echoed back on the result (used to compensate result staleness)."""
+        self._latest.put((frame, with_embeddings, token))
         self._wake.set()
-
-    def set_embeddings_enabled(self, enabled: bool) -> None:
-        """Embeddings cost ~50ms/face; only enrollment/recognition need them.
-        Plain bool assignment — atomic in CPython, read once per loop pass."""
-        self._with_embeddings = enabled
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -78,14 +76,13 @@ class InferenceWorker(QObject):
                 self._wake.clear()
                 if self._stop.is_set():
                     break
-                frame = self._latest.take()
-                if frame is None:
+                item = self._latest.take()
+                if item is None:
                     continue
+                frame, with_embeddings, token = item
                 try:
                     t0 = time.perf_counter()
-                    faces = engine.analyze(
-                        frame, with_embeddings=self._with_embeddings
-                    )
+                    faces = engine.analyze(frame, with_embeddings=with_embeddings)
                     latency_ms = (time.perf_counter() - t0) * 1000
                 except Exception as exc:
                     failures += 1
@@ -106,6 +103,8 @@ class InferenceWorker(QObject):
                         frame_w=w,
                         frame_h=h,
                         frame=frame,
+                        has_embeddings=with_embeddings,
+                        token=token,
                     )
                 )
         finally:

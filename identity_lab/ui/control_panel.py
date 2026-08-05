@@ -209,8 +209,12 @@ class ControlPanel(QWidget):
         self.model_label = QLabel("MODEL --")
         self.fps_label = QLabel("FPS --.-")
         self.fps_label.setObjectName("secondary")
-        self.latency_label = QLabel("LATENCY --- MS")
-        self.latency_label.setObjectName("secondary")
+        self.track_label = QLabel("TRACK --/S")
+        self.track_label.setObjectName("secondary")
+        self.det_label = QLabel("DET --- MS --/S")
+        self.det_label.setObjectName("secondary")
+        self.rec_label = QLabel("REC --- MS --/S")
+        self.rec_label.setObjectName("secondary")
         self.faces_label = QLabel("FACES --")
         self.id_label = QLabel("ID --")
         self.message_label = QLabel("")
@@ -220,7 +224,9 @@ class ControlPanel(QWidget):
             self.state_label,
             self.model_label,
             self.fps_label,
-            self.latency_label,
+            self.track_label,
+            self.det_label,
+            self.rec_label,
             self.faces_label,
             self.id_label,
             self.message_label,
@@ -332,11 +338,23 @@ class ControlPanel(QWidget):
     def show_fps(self, fps: float) -> None:
         self.fps_label.setText(f"FPS {fps:4.1f}")
 
-    def show_latency(self, ms: float | None) -> None:
-        if ms is None:
-            self.latency_label.setText("LATENCY --- MS")
+    def show_track_rate(self, hz: float | None) -> None:
+        if hz is None:
+            self.track_label.setText("TRACK --/S")
         else:
-            self.latency_label.setText(f"LATENCY {ms:3.0f} MS")
+            self.track_label.setText(f"TRACK {hz:4.1f}/S")
+
+    def show_det_stats(self, ms: float | None, hz: float | None) -> None:
+        if ms is None:
+            self.det_label.setText("DET --- MS --/S")
+        else:
+            self.det_label.setText(f"DET {ms:3.0f} MS {hz or 0:3.1f}/S")
+
+    def show_rec_stats(self, ms: float | None, hz: float | None) -> None:
+        if ms is None:
+            self.rec_label.setText("REC --- MS --/S")
+        else:
+            self.rec_label.setText(f"REC {ms:3.0f} MS {hz or 0:3.1f}/S")
 
     def show_face_count(self, count: int | None) -> None:
         self.faces_label.setText("FACES --" if count is None else f"FACES {count:02d}")

@@ -128,6 +128,12 @@ class IdentityStabilizer:
             return "DECAYED TO UNKNOWN"
         return f"HOLD {state.miss_count}/{self._demote_n}"
 
+    def is_confirmed(self, track_id: str) -> bool:
+        """True when this track currently displays a name. Unseen tracks are
+        unconfirmed — used to run recognition eagerly until names lock in."""
+        state = self._states.get(track_id)
+        return state is not None and state.current_id is not None
+
     def forget(self, track_id: str) -> None:
         """Track died — the person left; a return starts from scratch."""
         self._states.pop(track_id, None)
