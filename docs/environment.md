@@ -2,6 +2,20 @@
 
 Inspected 2026-07-29 during planning.
 
+## v0.1.0 release verification (2026-08-05)
+
+Verified: full pytest suite **185/185**; package import; offscreen
+application startup to MODEL READY (real inference worker, no webcam);
+migration tests (v1→v2 upgrade in place); clean-room setup — fresh venv
+built from the documented README commands, `pip install -r
+requirements.txt`, full suite green (22 s), import OK. Repository privacy
+audit: full git history contains only source/tests/docs (no databases,
+images, models, venvs, settings, logs, or exports; largest blob ever 25 KB).
+
+Exact versions at release: Python 3.11.14 (arm64), numpy 2.4.6,
+opencv-python 5.0.0.93, insightface 1.0.1, onnxruntime 1.23.2, PySide6
+6.11.1, pytest 9.1.1. Model buffalo_l; DB schema v2; app version 0.1.0.
+
 ## Machine
 
 | Item | Value |

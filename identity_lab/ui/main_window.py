@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
         else:
             self.resize(1040, 640)
 
+        self.log_event(f"IDENTITY LAB {self._build_info()}")
         self.log_event("SYSTEM START")
         if self._store_error:
             self.log_event(f"IDENTITY DB ERROR: {self._store_error}")
@@ -168,6 +169,27 @@ class MainWindow(QMainWindow):
             self._start_inference_worker()
 
     # -- status log --
+
+    @staticmethod
+    def _build_info() -> str:
+        """Version / model / schema / git revision for the event log."""
+        import subprocess
+
+        from identity_lab import __version__
+        from identity_lab.identity.store import SCHEMA_VERSION
+
+        info = f"V{__version__} · MODEL {MODEL_PACK.upper()} · SCHEMA V{SCHEMA_VERSION}"
+        try:
+            rev = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=Path(__file__).resolve().parents[2],
+                capture_output=True, text=True, timeout=1,
+            ).stdout.strip()
+            if rev:
+                info += f" · GIT {rev.upper()}"
+        except Exception:
+            pass  # not a git checkout — fine
+        return info
 
     def log_event(self, message: str) -> None:
         event = self._status_log.add(message)
