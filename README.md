@@ -8,6 +8,9 @@ window, lets you **deliberately enroll** named people from ~20 quality-gated
 face samples, and then recognizes them live — with temporal stabilization so
 labels are calm and honest. Everything runs on your machine.
 
+![Identity Lab recognizing an enrolled person, with live pipeline readouts
+and recognition controls](docs/screenshot.png)
+
 > **⚠️ Experimental, non-commercial research software.** This is a private
 > laboratory for exploring recognition for a future embodied robot — not a
 > production biometric security system. Do not use it for access control,
