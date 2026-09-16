@@ -180,20 +180,3 @@ notes in [docs/environment.md](docs/environment.md).
   This project uses them strictly within that boundary.
 - Other dependencies: PySide6 (LGPL-3.0), OpenCV (Apache-2.0), ONNX Runtime
   (MIT), NumPy (BSD-3-Clause).
-
-## Roadmap (documented intentions — not implemented)
-
-- Consent-driven voice introductions and speaker identity; face/voice
-  evidence fusion
-- Optional continual enrichment **for explicitly enrolled identities only**,
-  with a hard privacy boundary: unknown people are never persistently
-  profiled; new samples require strong identity evidence; redundant or
-  low-quality samples are rejected; everything learned is inspectable and
-  deletable by the user
-- Track age and observation-count diagnostics; a full debug overlay (track
-  id, raw matcher result, stabilizer state and votes, final displayed
-  identity)
-- Stronger motion tracking (Kalman/SORT-style prediction, low-confidence
-  association, embedding re-association)
-- Presence Lab: a higher-level system for presence, conversation, consent,
-  and interaction, built on this recognition substrate
