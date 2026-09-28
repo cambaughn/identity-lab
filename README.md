@@ -11,11 +11,13 @@ labels are calm and honest. Everything runs on your machine.
 ![Identity Lab recognizing an enrolled person, with live pipeline readouts
 and recognition controls](docs/screenshot.png)
 
-> **⚠️ Experimental, non-commercial research software.** This is a private
-> laboratory for exploring recognition for a future embodied robot — not a
-> production biometric security system. Do not use it for access control,
-> surveillance, or any consequential decision. **Use it only with the
-> informed consent of every person whose face is enrolled or captured.**
+> **⚠️ Experimental research software — not a production biometric security
+> system.** This is a laboratory for exploring recognition for a future
+> embodied robot. Do not use it for access control, surveillance, or any
+> consequential decision. **Use it only with the informed consent of every
+> person whose face is enrolled or captured.** The source code is
+> MIT-licensed, but the default face-recognition models are licensed for
+> non-commercial research only — see [Licensing](#licensing).
 
 ## Features
 
@@ -174,12 +176,46 @@ notes in [docs/environment.md](docs/environment.md).
 
 ## Licensing
 
-- **This repository:** private, non-commercial research code. No license is
-  currently granted for redistribution or commercial use.
-- **InsightFace code** (pip package): MIT-licensed.
-- **InsightFace pretrained models** (the auto-downloaded `buffalo_l` pack,
-  from the official InsightFace release archive): provided for
-  **non-commercial research purposes only**, per the InsightFace project.
-  This project uses them strictly within that boundary.
-- Other dependencies: PySide6 (LGPL-3.0), OpenCV (Apache-2.0), ONNX Runtime
-  (MIT), NumPy (BSD-3-Clause).
+**Identity Lab's original source code — everything authored in this
+repository — is released under the [MIT License](LICENSE).** You may use,
+copy, modify, redistribute, and incorporate it into other projects,
+including commercially.
+
+**The MIT grant covers only this repository's original code.** Third-party
+software, models, model weights, datasets, and other assets retain their
+own licenses and terms. An MIT license here cannot and does not relicense
+any of them.
+
+### ⚠️ The face-recognition models are NOT MIT — read this
+
+- Identity Lab's default configuration **automatically downloads the
+  InsightFace `buffalo_l` model pack on first run.** Per the InsightFace
+  project, its pretrained models — explicitly including auto-downloaded
+  ones — are available **for non-commercial research purposes only**
+  (a restriction inherited from the models' training data terms).
+  InsightFace's 2025 licensing update additionally directs commercial
+  licensing inquiries for the open-sourced recognition pack (`buffalo_l`)
+  to recognition-oss-pack@insightface.ai.
+- This repository does **not** contain or redistribute those weights, and
+  the MIT license on this code grants **no** rights to them of any kind.
+  Cloning Identity Lab does not, by itself, grant anyone the right to
+  deploy the default `buffalo_l` model commercially.
+- **If you want to use Identity Lab commercially**, the application code
+  does not restrict you — but you are responsible for either licensing the
+  models from InsightFace or substituting models whose terms permit your
+  intended use.
+
+### Third-party components
+
+None of the following are vendored into this repository; pip installs them
+from their own sources under their own licenses:
+
+- **InsightFace code** (pip package): MIT — "no limitation for both
+  academic and commercial usage." Distinct from the model weights above.
+- **ONNX Runtime:** MIT · **OpenCV / opencv-python:** Apache-2.0 ·
+  **NumPy:** BSD-3-Clause · **PySide6 / Qt:** LGPL-3.0 (as dynamically
+  loaded here that imposes nothing on this code; consult Qt's terms if you
+  redistribute Qt itself)
+- Transitive dependencies carry their own MIT / BSD / Apache-2.0 / MPL-2.0
+  terms (scikit-image, SciPy, Pillow, requests, certifi, tqdm, protobuf,
+  and friends).
